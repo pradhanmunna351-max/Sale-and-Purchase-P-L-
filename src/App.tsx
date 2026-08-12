@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { Component, useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { SheetUrlModal } from './components/SheetUrlModal';
 import { SalesDashboard } from './components/SalesDashboard';
@@ -12,6 +12,54 @@ import { ToastContainer } from './components/Toast';
 import { PanelDataDashboard } from './components/PanelDataDashboard';
 import { ExpenseEntry, SalesRecord, PurchaseRecord, ToastMessage } from './types';
 import { INITIAL_EXPENSES, INITIAL_SALES, INITIAL_PURCHASE } from './data/mockData';
+
+interface TabErrorBoundaryProps {
+  children: React.ReactNode;
+  tabName: string;
+  key?: React.Key;
+}
+
+interface TabErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class TabErrorBoundary extends Component<TabErrorBoundaryProps, TabErrorBoundaryState> {
+  constructor(props: TabErrorBoundaryProps) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null,
+    };
+  }
+
+  static getDerivedStateFromError(error: Error): TabErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error(`Error in tab ${this.props.tabName}:`, error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center bg-white rounded-xl shadow-md my-4 border border-red-100 max-w-2xl mx-auto">
+          <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3 text-xl font-bold">⚠️</div>
+          <h2 className="text-lg font-bold text-gray-800 mb-1">Error Loading {this.props.tabName}</h2>
+          <p className="text-gray-500 text-sm mb-4">{this.state.error?.message || 'An unexpected error occurred while rendering this tab.'}</p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="px-5 py-2.5 bg-[#2d5a5a] text-white rounded-lg text-xs font-bold hover:bg-[#204040] transition-colors"
+          >
+            Try Reloading Tab
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'sales' | 'purchase' | 'expense' | 'summary' | 'pl' | 'manual' | 'outstanding' | 'panel'>('sales');
@@ -56,15 +104,15 @@ export default function App() {
 
       if (expRes && expRes.ok) {
         const data = await expRes.json();
-        setExpenseEntries(data);
+        setExpenseEntries(Array.isArray(data) ? data : []);
       }
       if (salesRes && salesRes.ok) {
         const data = await salesRes.json();
-        setSalesData(data);
+        setSalesData(Array.isArray(data) ? data : []);
       }
       if (purRes && purRes.ok) {
         const data = await purRes.json();
-        setPurchaseData(data);
+        setPurchaseData(Array.isArray(data) ? data : []);
       }
 
       setLastSyncTimes({
@@ -95,8 +143,8 @@ export default function App() {
   // Extract Brand Suggestions from Sales & Purchase data
   useEffect(() => {
     const set = new Set<string>();
-    salesData.forEach((s) => s.Transaction_Details && set.add(s.Transaction_Details));
-    purchaseData.forEach((p) => p.Transaction_Details && set.add(p.Transaction_Details));
+    if (Array.isArray(salesData)) salesData.forEach((s) => s?.Transaction_Details && set.add(s.Transaction_Details));
+    if (Array.isArray(purchaseData)) purchaseData.forEach((p) => p?.Transaction_Details && set.add(p.Transaction_Details));
     setBrandSuggestions(Array.from(set).sort());
   }, [salesData, purchaseData]);
 
@@ -485,55 +533,57 @@ export default function App() {
 
           {/* Active Tab View */}
           <div className="p-2 sm:p-4">
-            {activeTab === 'sales' && (
-              <SalesDashboard
-                salesData={salesData}
-                onBulkUpload={handleBulkUploadSales}
-                onResetSales={handleResetSales}
-              />
-            )}
-            {activeTab === 'purchase' && (
-              <PurchaseDashboard
-                purchaseData={purchaseData}
-                onBulkUpload={handleBulkUploadPurchase}
-                onResetPurchase={handleResetPurchase}
-              />
-            )}
-            {activeTab === 'expense' && (
-              <ExpenseData
-                entries={expenseEntries}
-                onDelete={handleDeleteEntry}
-                onRefresh={fetchData}
-                onClearAll={handleClearAll}
-                onResetSheet={handleResetSheet}
-              />
-            )}
-            {activeTab === 'summary' && (
-              <SummaryTab expenses={expenseEntries} onRefresh={fetchData} />
-            )}
-            {activeTab === 'pl' && (
-              <PLAnalysis
-                salesData={salesData}
-                purchaseData={purchaseData}
-                expenseData={expenseEntries}
-              />
-            )}
-            {activeTab === 'outstanding' && (
-              <OutstandingDashboard
-                salesData={salesData}
-                purchaseData={purchaseData}
-              />
-            )}
-            {activeTab === 'manual' && (
-              <ManualEntry
-                onAddEntry={handleAddEntry}
-                onBulkUpload={handleBulkUpload}
-                brandSuggestions={brandSuggestions}
-              />
-            )}
-            {activeTab === 'panel' && (
-              <PanelDataDashboard onClose={() => setActiveTab('sales')} />
-            )}
+            <TabErrorBoundary key={activeTab} tabName={activeTab}>
+              {activeTab === 'sales' && (
+                <SalesDashboard
+                  salesData={Array.isArray(salesData) ? salesData : []}
+                  onBulkUpload={handleBulkUploadSales}
+                  onResetSales={handleResetSales}
+                />
+              )}
+              {activeTab === 'purchase' && (
+                <PurchaseDashboard
+                  purchaseData={Array.isArray(purchaseData) ? purchaseData : []}
+                  onBulkUpload={handleBulkUploadPurchase}
+                  onResetPurchase={handleResetPurchase}
+                />
+              )}
+              {activeTab === 'expense' && (
+                <ExpenseData
+                  entries={Array.isArray(expenseEntries) ? expenseEntries : []}
+                  onDelete={handleDeleteEntry}
+                  onRefresh={fetchData}
+                  onClearAll={handleClearAll}
+                  onResetSheet={handleResetSheet}
+                />
+              )}
+              {activeTab === 'summary' && (
+                <SummaryTab expenses={Array.isArray(expenseEntries) ? expenseEntries : []} onRefresh={fetchData} />
+              )}
+              {activeTab === 'pl' && (
+                <PLAnalysis
+                  salesData={Array.isArray(salesData) ? salesData : []}
+                  purchaseData={Array.isArray(purchaseData) ? purchaseData : []}
+                  expenseData={Array.isArray(expenseEntries) ? expenseEntries : []}
+                />
+              )}
+              {activeTab === 'outstanding' && (
+                <OutstandingDashboard
+                  salesData={Array.isArray(salesData) ? salesData : []}
+                  purchaseData={Array.isArray(purchaseData) ? purchaseData : []}
+                />
+              )}
+              {activeTab === 'manual' && (
+                <ManualEntry
+                  onAddEntry={handleAddEntry}
+                  onBulkUpload={handleBulkUpload}
+                  brandSuggestions={brandSuggestions}
+                />
+              )}
+              {activeTab === 'panel' && (
+                <PanelDataDashboard onClose={() => setActiveTab('sales')} />
+              )}
+            </TabErrorBoundary>
           </div>
         </div>
       </div>
