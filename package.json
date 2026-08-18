@@ -18,13 +18,17 @@
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "papaparse": "^5.5.4",
     "react": "^19.0.1",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.0.1",
+    "recharts": "^3.10.1",
     "vite": "^6.2.3"
   },
   "devDependencies": {

@@ -12,8 +12,10 @@ import {
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { SalesRecord, PurchaseRecord, ExpenseEntry, FilterState } from '../types';
+import { SalesRecord, PurchaseRecord, ExpenseEntry, PaymentRecord, FilterState } from '../types';
 import { standardizeMonth, parseMonthTimestamp } from '../utils/monthUtils';
+import { classifySalesRecord, classifyPurchaseRecord, parseNum } from '../utils/recordClassifier';
+import { generateBusinessInsights } from '../utils/aiAnalysis';
 
 ChartJS.register(
   CategoryScale,
@@ -31,73 +33,8 @@ interface PLAnalysisProps {
   salesData: SalesRecord[];
   purchaseData: PurchaseRecord[];
   expenseData: ExpenseEntry[];
+  paymentData?: PaymentRecord[];
 }
-
-const parseNum = (val: any): number => {
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
-  const str = String(val || '').replace(/[^0-9.-]/g, '').trim();
-  const n = parseFloat(str);
-  return isNaN(n) ? 0 : n;
-};
-
-// Explicit classification: Debit (Col I) = Invoice (Gross Sales), Credit (Col J) = Return (Credit Note)
-const classifySalesRecord = (item: SalesRecord) => {
-  const transType = String(item.Transaction_Type || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-  const debit = parseNum(item.Debit);   // Column I (Invoice Value)
-  const credit = parseNum(item.Credit); // Column J (Return Value)
-  const net = parseNum(item.Net_Amount);
-
-  let isReturn = transType.includes('credit') || transType.includes('return') || transType.includes('cn') || transType.includes('refund');
-  let isInvoice = transType.includes('invoice') || transType.includes('inv') || transType.includes('debitnote') || transType === 'sale' || transType === 'sales';
-
-  if (!isReturn && !isInvoice) {
-    if (debit > 0 && credit === 0) isInvoice = true;
-    else if (credit > 0 && debit === 0) isReturn = true;
-    else if (debit >= credit) isInvoice = true;
-    else isReturn = true;
-  }
-
-  let invoiceVal = 0;
-  let returnVal = 0;
-
-  if (isInvoice) {
-    // Invoice (Debit - Column I)
-    invoiceVal = debit !== 0 ? Math.abs(debit) : (credit !== 0 ? Math.abs(credit) : Math.abs(net));
-  } else {
-    // Return (Credit - Column J)
-    returnVal = credit !== 0 ? Math.abs(credit) : (debit !== 0 ? Math.abs(debit) : Math.abs(net));
-  }
-
-  return { isInvoice, isReturn, invoiceVal, returnVal };
-};
-
-const classifyPurchaseRecord = (item: PurchaseRecord) => {
-  const transType = String(item.Transaction_Type || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-  const debit = parseNum(item.Debit);
-  const credit = parseNum(item.Credit);
-  const net = parseNum(item.Net_Amount);
-
-  let isVendorCredit = transType.includes('credit') || transType.includes('return') || transType.includes('vendorcredit') || transType.includes('refund');
-  let isBill = transType.includes('bill') || transType.includes('purchase') || transType.includes('invoice') || transType.includes('inv');
-
-  if (!isVendorCredit && !isBill) {
-    if (debit > 0) isBill = true;
-    else if (credit > 0) isVendorCredit = true;
-    else if (net >= 0) isBill = true;
-    else isVendorCredit = true;
-  }
-
-  let billVal = 0;
-  let vendorCreditVal = 0;
-
-  if (isBill) {
-    billVal = debit !== 0 ? Math.abs(debit) : (net !== 0 ? Math.abs(net) : Math.abs(credit));
-  } else {
-    vendorCreditVal = credit !== 0 ? Math.abs(credit) : (net !== 0 ? Math.abs(net) : Math.abs(debit));
-  }
-
-  return { isBill, isVendorCredit, billVal, vendorCreditVal };
-};
 
 const parseMonthDate = (mStr: string) => {
   if (!mStr) return 0;
@@ -123,6 +60,7 @@ export const PLAnalysis: React.FC<PLAnalysisProps> = ({
   salesData,
   purchaseData,
   expenseData,
+  paymentData = [],
 }) => {
   const [activeView, setActiveView] = useState<'dashboard' | 'matrix' | 'summary'>('dashboard');
   const [filters, setFilters] = useState<FilterState>({
@@ -130,6 +68,10 @@ export const PLAnalysis: React.FC<PLAnalysisProps> = ({
     month: 'all',
     year: 'all',
   });
+
+  const insights = useMemo(() => {
+    return generateBusinessInsights(salesData, purchaseData, expenseData, paymentData);
+  }, [salesData, purchaseData, expenseData, paymentData]);
 
   const channelsList = useMemo(() => {
     const set = new Set<string>();
@@ -505,6 +447,25 @@ export const PLAnalysis: React.FC<PLAnalysisProps> = ({
 
       {activeView === 'dashboard' && (
         <div>
+          {/* AI Insights Card */}
+          <div className="bg-gradient-to-r from-purple-50 to-indigo-50 p-4 rounded-xl shadow-sm border border-purple-100 mb-5">
+            <div className="flex items-center gap-2 mb-3 border-b border-purple-200 pb-2">
+              <span className="text-xl">🤖</span>
+              <h3 className="text-sm font-black text-purple-900 tracking-tight uppercase">AI Business Analysis</h3>
+            </div>
+            <div className="space-y-2">
+              {insights.notes.map((note, idx) => (
+                <div key={idx} className="flex gap-2 text-sm text-purple-800">
+                  <span className="shrink-0">•</span>
+                  <span className="font-medium leading-tight">{note}</span>
+                </div>
+              ))}
+              {insights.notes.length === 0 && (
+                <div className="text-sm text-purple-600 italic">Not enough data to generate insights yet.</div>
+              )}
+            </div>
+          </div>
+
           {/* KPI Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
             <div className="bg-[#f8fafc] p-3 rounded-lg border border-gray-200 border-l-4 border-l-[#3498db]">

@@ -6,6 +6,7 @@ import { Bar, Doughnut } from 'react-chartjs-2';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { PurchaseRecord, FilterState } from '../types';
 import { standardizeMonth, parseMonthTimestamp } from '../utils/monthUtils';
+import { classifyPurchaseRecord, parseNum } from '../utils/recordClassifier';
 
 ChartJS.register(
   CategoryScale,
@@ -94,30 +95,34 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     });
   }, [purchaseData, filters]);
 
+  const parseNum = (val: any) => {
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    const str = String(val || '').replace(/[^0-9.-]/g, '').trim();
+    const n = parseFloat(str);
+    return isNaN(n) ? 0 : n;
+  };
+
+  const classifyPurchaseRow = (item: PurchaseRecord) => {
+    const res = classifyPurchaseRecord(item);
+    return {
+      isBill: res.isBill,
+      isReturn: res.isCredit,
+      purchaseVal: res.billVal,
+      returnVal: res.creditVal,
+    };
+  };
+
   // Calculations
   const totals = useMemo(() => {
     let purchase = 0;
     let returns = 0;
 
     filteredPurchase.forEach((item) => {
-      const transType = String(item.Transaction_Type || '').toLowerCase().trim();
-      if (transType === 'bill') {
-        let debitVal = parseFloat(String(item.Debit)) || 0;
-        if (debitVal < 0) debitVal = Math.abs(debitVal);
-        if (debitVal === 0) {
-          debitVal = parseFloat(String(item.Net_Amount)) || 0;
-          if (debitVal < 0) debitVal = Math.abs(debitVal);
-        }
-        purchase += debitVal;
-      }
-      if (transType === 'vendor_credit') {
-        let creditVal = parseFloat(String(item.Credit)) || 0;
-        if (creditVal < 0) creditVal = Math.abs(creditVal);
-        if (creditVal === 0) {
-          creditVal = parseFloat(String(item.Net_Amount)) || 0;
-          if (creditVal < 0) creditVal = Math.abs(creditVal);
-        }
-        returns += creditVal;
+      const { isBill, purchaseVal, returnVal } = classifyPurchaseRow(item);
+      if (isBill) {
+        purchase += purchaseVal;
+      } else {
+        returns += returnVal;
       }
     });
 
@@ -133,15 +138,9 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     filteredPurchase.forEach((item) => {
       const m = standardizeMonth(item.Month) || 'Unknown';
       if (!map[m]) map[m] = { purchase: 0, returns: 0 };
-      const transType = String(item.Transaction_Type || '').toLowerCase().trim();
-      if (transType === 'bill') {
-        let val = parseFloat(String(item.Debit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[m].purchase += Math.abs(val);
-      }
-      if (transType === 'vendor_credit') {
-        let val = parseFloat(String(item.Credit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[m].returns += Math.abs(val);
-      }
+      const { isBill, purchaseVal, returnVal } = classifyPurchaseRow(item);
+      if (isBill) map[m].purchase += purchaseVal;
+      else map[m].returns += returnVal;
     });
 
     const labels = Object.keys(map).sort((a, b) => {
@@ -164,10 +163,9 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     const map: Record<string, number> = {};
     filteredPurchase.forEach((item) => {
       const detail = item.Transaction_Details || 'N/A';
-      const transType = String(item.Transaction_Type || '').toLowerCase().trim();
-      if (transType === 'bill') {
-        let val = parseFloat(String(item.Debit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[detail] = (map[detail] || 0) + Math.abs(val);
+      const { isBill, purchaseVal } = classifyPurchaseRow(item);
+      if (isBill) {
+        map[detail] = (map[detail] || 0) + purchaseVal;
       }
     });
 
@@ -187,10 +185,9 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     const map: Record<string, number> = {};
     filteredPurchase.forEach((item) => {
       const channel = item.Channel || 'Unknown';
-      const transType = String(item.Transaction_Type || '').toLowerCase().trim();
-      if (transType === 'bill') {
-        let val = parseFloat(String(item.Debit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[channel] = (map[channel] || 0) + Math.abs(val);
+      const { isBill, purchaseVal } = classifyPurchaseRow(item);
+      if (isBill) {
+        map[channel] = (map[channel] || 0) + purchaseVal;
       }
     });
 
@@ -206,13 +203,13 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     const map: Record<string, { paid: number; open: number }> = {};
     filteredPurchase.forEach((item) => {
       const m = standardizeMonth(item.Month) || 'Unknown';
-      const status = String(item['Final Status'] || '').toLowerCase().trim();
+      const status = String(item['Final Status'] || item.Status || item.Document_Status || '').toLowerCase().trim();
       if (!map[m]) map[m] = { paid: 0, open: 0 };
 
-      let val = parseFloat(String(item.Debit)) || parseFloat(String(item.Net_Amount)) || 0;
-      val = Math.abs(val);
+      const { purchaseVal, returnVal } = classifyPurchaseRow(item);
+      const val = purchaseVal > 0 ? purchaseVal : returnVal;
 
-      if (status === 'paid') map[m].paid += val;
+      if (status.includes('paid') || status.includes('closed')) map[m].paid += val;
       else map[m].open += val;
     });
 
@@ -235,15 +232,9 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     filteredPurchase.forEach((item) => {
       const detail = item.Transaction_Details || 'N/A';
       if (!map[detail]) map[detail] = { purchase: 0, returns: 0 };
-      const transType = String(item.Transaction_Type || '').toLowerCase().trim();
-      if (transType === 'bill') {
-        let val = parseFloat(String(item.Debit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[detail].purchase += Math.abs(val);
-      }
-      if (transType === 'vendor_credit') {
-        let val = parseFloat(String(item.Credit)) || parseFloat(String(item.Net_Amount)) || 0;
-        map[detail].returns += Math.abs(val);
-      }
+      const { isBill, purchaseVal, returnVal } = classifyPurchaseRow(item);
+      if (isBill) map[detail].purchase += purchaseVal;
+      else map[detail].returns += returnVal;
     });
 
     return Object.keys(map).map((k) => {
@@ -361,13 +352,6 @@ export const PurchaseDashboard: React.FC<PurchaseDashboardProps> = ({
     if (current < total - 2) pages.push('...');
     pages.push(total);
     return pages;
-  };
-
-  const parseNum = (val: any) => {
-    if (typeof val === 'number') return isNaN(val) ? 0 : val;
-    const str = String(val || '').replace(/[^0-9.-]/g, '').trim();
-    const n = parseFloat(str);
-    return isNaN(n) ? 0 : n;
   };
 
   const formatRupee = (val: number) =>

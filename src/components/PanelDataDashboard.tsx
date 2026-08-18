@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Settings, ShoppingCart, CreditCard, RotateCcw, Link, FileSpreadsheet, Loader2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { X, Settings, ShoppingCart, CreditCard, RotateCcw, Link, FileSpreadsheet, Loader2, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
 interface PanelDataDashboardProps {
   onClose: () => void;
@@ -13,6 +13,11 @@ export function PanelDataDashboard({ onClose }: PanelDataDashboardProps) {
   const [panelData, setPanelData] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Pagination & Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(25);
 
   const currentKey = `${activeChannel}-${activeSubTab}`;
   const currentData = panelData[currentKey];
@@ -37,6 +42,8 @@ export function PanelDataDashboard({ onClose }: PanelDataDashboardProps) {
       const data = await res.json();
       if (res.ok && data.success) {
         setPanelData(prev => ({ ...prev, [currentKey]: data }));
+        setCurrentPage(1);
+        setSearchQuery('');
       } else {
         setErrorMsg(data.message || 'Failed to fetch data');
       }
@@ -45,6 +52,38 @@ export function PanelDataDashboard({ onClose }: PanelDataDashboardProps) {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Filtered rows for current sheet
+  const filteredRows = useMemo(() => {
+    if (!currentData || !currentData.rawRows) return [];
+    if (!searchQuery.trim()) return currentData.rawRows;
+    const q = searchQuery.toLowerCase().trim();
+    return currentData.rawRows.filter((row: any[]) =>
+      row.some((cell: any) => String(cell || '').toLowerCase().includes(q))
+    );
+  }, [currentData, searchQuery]);
+
+  const totalRecords = filteredRows.length;
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(totalRecords / pageSize)) : 1;
+  const validPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedRows = useMemo(() => {
+    if (pageSize <= 0) return filteredRows;
+    const start = (validPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, validPage, pageSize]);
+
+  const generatePageNumbers = (current: number, total: number) => {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    const pages: (number | string)[] = [1];
+    if (current > 3) pages.push('...');
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (current < total - 2) pages.push('...');
+    pages.push(total);
+    return pages;
   };
 
   return (
@@ -160,7 +199,7 @@ export function PanelDataDashboard({ onClose }: PanelDataDashboardProps) {
               </div>
             ) : currentData ? (
               <div className="flex flex-col h-full overflow-hidden pb-4">
-                <div className="flex items-center justify-between mb-4 shrink-0">
+                <div className="flex items-center justify-between mb-4 shrink-0 flex-wrap gap-2">
                   <div className="flex items-center gap-3">
                     <div className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold border border-green-200">
                       {currentData.rawRows.length} Rows Imported
@@ -174,41 +213,173 @@ export function PanelDataDashboard({ onClose }: PanelDataDashboardProps) {
                     Disconnect Sheet
                   </button>
                 </div>
-                
+
+                {/* Toolbar with Search and Page Size Selector */}
+                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 mb-3 bg-gray-50 p-2.5 rounded-lg border border-gray-200 text-xs">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                      placeholder="Search across columns..."
+                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-[#2d5a5a]"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 justify-between sm:justify-end">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-gray-600 font-medium">Rows per page:</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="border border-gray-300 rounded px-2 py-1 bg-white font-semibold text-gray-700 focus:outline-none"
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                        <option value={250}>250</option>
+                        <option value={0}>All ({totalRecords})</option>
+                      </select>
+                    </div>
+
+                    <div className="text-gray-600 font-medium">
+                      Showing{' '}
+                      <span className="font-bold text-gray-800">
+                        {totalRecords === 0
+                          ? 0
+                          : pageSize === 0
+                          ? 1
+                          : (validPage - 1) * pageSize + 1}
+                      </span>{' '}
+                      to{' '}
+                      <span className="font-bold text-gray-800">
+                        {pageSize === 0
+                          ? totalRecords
+                          : Math.min(validPage * pageSize, totalRecords)}
+                      </span>{' '}
+                      of <span className="font-bold text-gray-800">{totalRecords}</span>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex-1 overflow-auto rounded-xl border shadow-sm bg-white">
                   <table className="w-full text-left border-collapse min-w-max">
                     <thead className="sticky top-0 z-10 bg-white shadow-sm ring-1 ring-black ring-opacity-5">
                       <tr className="bg-gradient-to-r from-[#f8f9fa] to-[#f1f3f5] border-b text-gray-700">
+                        <th className="py-3 px-3 font-bold text-xs border-r border-gray-200 w-12 text-center bg-gray-100">#</th>
                         {currentData.headers.map((h: string, i: number) => (
                           <th key={i} className="py-3.5 px-4 font-bold text-sm truncate max-w-[200px] border-r last:border-r-0 border-gray-200">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {currentData.rawRows.slice(0, 100).map((row: any[], rIdx: number) => (
-                        <tr key={rIdx} className="hover:bg-blue-50/30 transition-colors">
-                          {currentData.headers.map((_: any, cIdx: number) => {
-                            const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '-';
-                            const isNumeric = /^-?\d+(\.\d+)?$/.test(val.replace(/,/g, ''));
-                            return (
-                              <td 
-                                key={cIdx} 
-                                className={`py-3 px-4 text-sm text-gray-700 truncate max-w-[200px] border-r last:border-r-0 border-gray-100 ${isNumeric ? 'font-medium text-blue-900' : ''}`}
-                              >
-                                {val}
-                              </td>
-                            );
-                          })}
+                      {paginatedRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={(currentData.headers?.length || 1) + 1} className="py-8 text-center text-gray-400">
+                            No matching records found
+                          </td>
                         </tr>
-                      ))}
+                      ) : (
+                        paginatedRows.map((row: any[], rIdx: number) => {
+                          const rowNum = pageSize === 0 ? rIdx + 1 : (validPage - 1) * pageSize + rIdx + 1;
+                          return (
+                            <tr key={rIdx} className="hover:bg-blue-50/30 transition-colors">
+                              <td className="py-2.5 px-3 text-xs text-gray-400 font-mono text-center border-r border-gray-100 bg-gray-50/50">
+                                {rowNum}
+                              </td>
+                              {currentData.headers.map((_: any, cIdx: number) => {
+                                const val = row[cIdx] !== undefined && row[cIdx] !== null ? String(row[cIdx]) : '-';
+                                const isNumeric = /^-?\d+(\.\d+)?$/.test(val.replace(/,/g, ''));
+                                return (
+                                  <td 
+                                    key={cIdx} 
+                                    className={`py-3 px-4 text-sm text-gray-700 truncate max-w-[200px] border-r last:border-r-0 border-gray-100 ${isNumeric ? 'font-medium text-blue-900' : ''}`}
+                                  >
+                                    {val}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </table>
-                  {currentData.rawRows.length > 100 && (
-                    <div className="text-center p-4 text-sm text-gray-500 bg-gray-50 border-t sticky bottom-0">
-                      Showing first 100 rows for preview. Full dataset ({currentData.rawRows.length} rows) is ready.
-                    </div>
-                  )}
                 </div>
+
+                {/* Bottom Pagination Bar */}
+                {pageSize > 0 && totalPages > 1 && (
+                  <div className="flex justify-between items-center mt-3 pt-2 border-t border-gray-200 flex-wrap gap-2 text-xs">
+                    <span className="text-gray-500">
+                      Page <span className="font-bold text-gray-800">{validPage}</span> of{' '}
+                      <span className="font-bold text-gray-800">{totalPages}</span>
+                    </span>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setCurrentPage(1)}
+                        disabled={validPage <= 1}
+                        className="p-1.5 border border-gray-300 rounded-md disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 bg-white"
+                        title="First Page"
+                      >
+                        <ChevronsLeft size={14} />
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={validPage <= 1}
+                        className="p-1.5 border border-gray-300 rounded-md disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 bg-white"
+                        title="Previous Page"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+
+                      {generatePageNumbers(validPage, totalPages).map((p, i) =>
+                        p === '...' ? (
+                          <span key={`ell-${i}`} className="px-1 text-gray-400">
+                            ...
+                          </span>
+                        ) : (
+                          <button
+                            key={p}
+                            onClick={() => setCurrentPage(Number(p))}
+                            className={`px-2.5 py-1 border rounded-md font-medium ${
+                              validPage === p
+                                ? 'bg-[#2d5a5a] text-white border-[#2d5a5a]'
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={validPage >= totalPages}
+                        className="p-1.5 border border-gray-300 rounded-md disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 bg-white"
+                        title="Next Page"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={validPage >= totalPages}
+                        className="p-1.5 border border-gray-300 rounded-md disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 bg-white"
+                        title="Last Page"
+                      >
+                        <ChevronsRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-[60vh] bg-gradient-to-br from-[#f8fafc] to-[#f1f5f9] rounded-2xl border border-gray-200 p-8 text-center shadow-inner">

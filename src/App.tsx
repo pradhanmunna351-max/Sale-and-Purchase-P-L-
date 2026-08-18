@@ -1,6 +1,7 @@
 import React, { Component, useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { SheetUrlModal } from './components/SheetUrlModal';
+import { FormulaReferenceModal } from './components/FormulaReferenceModal';
 import { SalesDashboard } from './components/SalesDashboard';
 import { PurchaseDashboard } from './components/PurchaseDashboard';
 import { OutstandingDashboard } from './components/OutstandingDashboard';
@@ -9,9 +10,12 @@ import { SummaryTab } from './components/SummaryTab';
 import { PLAnalysis } from './components/PLAnalysis';
 import { ManualEntry } from './components/ManualEntry';
 import { ToastContainer } from './components/Toast';
-import { PanelDataDashboard } from './components/PanelDataDashboard';
-import { ExpenseEntry, SalesRecord, PurchaseRecord, ToastMessage } from './types';
+import { PaymentReceivedDashboard } from './components/PaymentReceivedDashboard';
+import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord, ToastMessage } from './types';
 import { INITIAL_EXPENSES, INITIAL_SALES, INITIAL_PURCHASE } from './data/mockData';
+import { generateMasterExcelReport, ExcelExportOptions } from './utils/excelExport';
+import { CustomizeExcelModal } from './components/CustomizeExcelModal';
+import { FileSpreadsheet } from 'lucide-react';
 
 interface TabErrorBoundaryProps {
   children: React.ReactNode;
@@ -62,23 +66,28 @@ class TabErrorBoundary extends Component<TabErrorBoundaryProps, TabErrorBoundary
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'sales' | 'purchase' | 'expense' | 'summary' | 'pl' | 'manual' | 'outstanding' | 'panel'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'purchase' | 'expense' | 'summary' | 'pl' | 'manual' | 'outstanding' | 'payment_received'>('sales');
   const [expenseEntries, setExpenseEntries] = useState<ExpenseEntry[]>([]);
   const [salesData, setSalesData] = useState<SalesRecord[]>([]);
   const [purchaseData, setPurchaseData] = useState<PurchaseRecord[]>([]);
-  const [sheetUrls, setSheetUrls] = useState<{ sales: string; purchase: string; expense: string }>({
-    sales: '',
-    purchase: '',
-    expense: '',
+  const [paymentData, setPaymentData] = useState<PaymentRecord[]>([]);
+  const [sheetUrls, setSheetUrls] = useState<{ sales: string; purchase: string; expense: string; payment: string }>({
+    sales: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=439511693',
+    purchase: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=703337859',
+    expense: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=1491839510',
+    payment: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=265200234',
   });
-  const [lastSyncTimes, setLastSyncTimes] = useState<{ sales: string; purchase: string; expense: string }>({
+  const [lastSyncTimes, setLastSyncTimes] = useState<{ sales: string; purchase: string; expense: string; payment: string }>({
     sales: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     purchase: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     expense: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    payment: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isFormulaModalOpen, setIsFormulaModalOpen] = useState(false);
+  const [isCustomizeExcelOpen, setIsCustomizeExcelOpen] = useState(false);
   const [brandSuggestions, setBrandSuggestions] = useState<string[]>([]);
 
   const showToast = useCallback((text: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -93,10 +102,11 @@ export default function App() {
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const [expRes, salesRes, purRes, configRes] = await Promise.all([
+      const [expRes, salesRes, purRes, paymentRes, configRes] = await Promise.all([
         fetch('/api/expenses').catch(() => null),
         fetch('/api/sales').catch(() => null),
         fetch('/api/purchase').catch(() => null),
+        fetch('/api/payments').catch(() => null),
         fetch('/api/config/sheet-urls').catch(() => null),
       ]);
 
@@ -114,11 +124,16 @@ export default function App() {
         const data = await purRes.json();
         setPurchaseData(Array.isArray(data) ? data : []);
       }
+      if (paymentRes && paymentRes.ok) {
+        const data = await paymentRes.json();
+        setPaymentData(Array.isArray(data) ? data : []);
+      }
 
       setLastSyncTimes({
         sales: nowStr,
         purchase: nowStr,
         expense: nowStr,
+        payment: nowStr,
       });
 
       if (configRes && configRes.ok) {
@@ -299,7 +314,7 @@ export default function App() {
     }
   };
 
-  const handleSaveSheetUrls = async (newUrls: { sales: string; purchase: string; expense: string }) => {
+  const handleSaveSheetUrls = async (newUrls: { sales: string; purchase: string; expense: string; payment: string }) => {
     setSheetUrls(newUrls);
     try {
       await fetch('/api/config/sheet-urls', {
@@ -427,6 +442,22 @@ export default function App() {
     }
   };
 
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+
+  const handleExportExcel = async (options?: ExcelExportOptions) => {
+    setIsExportingExcel(true);
+    showToast('📊 Generating customized Master Excel Report...', 'info');
+    try {
+      await generateMasterExcelReport(salesData, purchaseData, expenseEntries, paymentData, options);
+      showToast('✅ Excel Report generated and downloaded successfully!', 'success');
+    } catch (err: any) {
+      console.error('Error generating Excel report:', err);
+      showToast(`❌ Failed to export Excel: ${err?.message || 'Unknown error'}`, 'error');
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f0f2f5] p-3 sm:p-5 font-sans">
       <div className="max-w-[1600px] mx-auto">
@@ -437,6 +468,11 @@ export default function App() {
           lastSyncTimes={lastSyncTimes}
           onRefreshData={fetchData}
           isRefreshing={isRefreshing}
+          onExportExcel={handleExportExcel}
+          onOpenCustomizeExcel={() => setIsCustomizeExcelOpen(true)}
+          isExportingExcel={isExportingExcel}
+          onOpenFormulaReference={() => setIsFormulaModalOpen(true)}
+          hasPaymentData={paymentData.length > 0}
         />
 
         {/* Tab Navigation */}
@@ -520,14 +556,14 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab('panel')}
+              onClick={() => setActiveTab('payment_received')}
               className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center gap-1.5 whitespace-nowrap transition-all ${
-                activeTab === 'panel'
+                activeTab === 'payment_received'
                   ? 'border-[#2d5a5a] text-[#2d5a5a] bg-white'
                   : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-100/50'
               }`}
             >
-              🖥️ Panel Data
+              💸 Payment Received
             </button>
           </div>
 
@@ -565,12 +601,20 @@ export default function App() {
                   salesData={Array.isArray(salesData) ? salesData : []}
                   purchaseData={Array.isArray(purchaseData) ? purchaseData : []}
                   expenseData={Array.isArray(expenseEntries) ? expenseEntries : []}
+                  paymentData={paymentData}
                 />
               )}
               {activeTab === 'outstanding' && (
                 <OutstandingDashboard
                   salesData={Array.isArray(salesData) ? salesData : []}
                   purchaseData={Array.isArray(purchaseData) ? purchaseData : []}
+                  expenseData={Array.isArray(expenseEntries) ? expenseEntries : []}
+                  paymentData={paymentData}
+                />
+              )}
+              {activeTab === 'payment_received' && (
+                <PaymentReceivedDashboard
+                  paymentData={paymentData}
                 />
               )}
               {activeTab === 'manual' && (
@@ -579,9 +623,6 @@ export default function App() {
                   onBulkUpload={handleBulkUpload}
                   brandSuggestions={brandSuggestions}
                 />
-              )}
-              {activeTab === 'panel' && (
-                <PanelDataDashboard onClose={() => setActiveTab('sales')} />
               )}
             </TabErrorBoundary>
           </div>
@@ -594,6 +635,22 @@ export default function App() {
         sheetUrls={sheetUrls}
         onSave={handleSaveSheetUrls}
         onDataImported={fetchData}
+      />
+
+      <FormulaReferenceModal
+        isOpen={isFormulaModalOpen}
+        onClose={() => setIsFormulaModalOpen(false)}
+      />
+
+      <CustomizeExcelModal
+        isOpen={isCustomizeExcelOpen}
+        onClose={() => setIsCustomizeExcelOpen(false)}
+        salesData={salesData}
+        purchaseData={purchaseData}
+        expenseData={expenseEntries}
+        paymentData={paymentData}
+        onExport={handleExportExcel}
+        isExporting={isExportingExcel}
       />
 
       <ToastContainer toasts={toasts} />

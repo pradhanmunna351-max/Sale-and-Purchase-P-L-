@@ -48,6 +48,15 @@ export interface PurchaseRecord {
   Document_Status?: string;
 }
 
+export interface PaymentRecord {
+  Payment_No: string;
+  Bank_Entry_Date: string;
+  Description: string;
+  Amount: number;
+  Channel: string;
+  Month: string;
+}
+
 export interface FilterState {
   channel: string;
   month: string;

@@ -5,6 +5,7 @@ interface SheetUrls {
   sales: string;
   purchase: string;
   expense: string;
+  payment: string;
 }
 
 interface SheetUrlModalProps {
@@ -28,6 +29,7 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
   const [salesUrl, setSalesUrl] = useState(sheetUrls.sales);
   const [purchaseUrl, setPurchaseUrl] = useState(sheetUrls.purchase);
   const [expenseUrl, setExpenseUrl] = useState(sheetUrls.expense);
+  const [paymentUrl, setPaymentUrl] = useState(sheetUrls.payment);
 
   // Inspector State
   const [inspectUrl, setInspectUrl] = useState('');
@@ -35,12 +37,12 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
   const [inspectionResult, setInspectionResult] = useState<{
     headers: string[];
     totalRows: number;
-    detectedCategory: 'sales' | 'purchase' | 'expense';
+    detectedCategory: 'sales' | 'purchase' | 'expense' | 'payment';
     suggestedMapping?: Record<string, string>;
     sampleRows: string[][];
     rawRows: string[][];
   } | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState<'sales' | 'purchase' | 'expense'>('sales');
+  const [selectedCategory, setSelectedCategory] = useState<'sales' | 'purchase' | 'expense' | 'payment'>('sales');
   const [columnMapping, setColumnMapping] = useState<{
     month: string;
     channel: string;
@@ -70,6 +72,7 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
       sales: salesUrl.trim(),
       purchase: purchaseUrl.trim(),
       expense: expenseUrl.trim(),
+      payment: paymentUrl.trim(),
     });
     onClose();
   };
@@ -158,11 +161,13 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
         if (selectedCategory === 'sales') setSalesUrl(inspectUrl.trim());
         if (selectedCategory === 'purchase') setPurchaseUrl(inspectUrl.trim());
         if (selectedCategory === 'expense') setExpenseUrl(inspectUrl.trim());
+        if (selectedCategory === 'payment') setPaymentUrl(inspectUrl.trim());
 
         onSave({
           sales: selectedCategory === 'sales' ? inspectUrl.trim() : salesUrl,
           purchase: selectedCategory === 'purchase' ? inspectUrl.trim() : purchaseUrl,
           expense: selectedCategory === 'expense' ? inspectUrl.trim() : expenseUrl,
+          payment: selectedCategory === 'payment' ? inspectUrl.trim() : paymentUrl,
         });
 
         if (onDataImported) onDataImported();
@@ -437,6 +442,7 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
                         <option value="sales">💰 Sales Dashboard</option>
                         <option value="purchase">🛒 Purchase Dashboard</option>
                         <option value="expense">📋 Expense Ledger</option>
+                        <option value="payment">💸 Payment Received</option>
                       </select>
                     </div>
 
@@ -509,6 +515,31 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
               Aap apne main Google Spreadsheets ke direct URLs update kar sakte hain:
             </p>
 
+            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 mb-4">
+              <label className="block text-xs font-bold text-emerald-800 mb-1">
+                🔗 Master Sheet Link (Auto-fill all tabs)
+              </label>
+              <p className="text-[10px] text-emerald-600 mb-2">
+                Paste your main Google Sheet link here to automatically set Sales, Purchase, Expense, and Payment links.
+              </p>
+              <input
+                type="text"
+                placeholder="https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit"
+                className="w-full px-3 py-2 border border-emerald-200 rounded-md text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const match = val.match(/(https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9_-]+)/);
+                  if (match) {
+                    const baseUrl = match[1];
+                    setSalesUrl(`${baseUrl}/edit#gid=439511693`);
+                    setPurchaseUrl(`${baseUrl}/edit#gid=703337859`);
+                    setExpenseUrl(`${baseUrl}/edit#gid=1491839510`);
+                    setPaymentUrl(`${baseUrl}/edit#gid=265200234`);
+                  }
+                }}
+              />
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-emerald-700 mb-1">
                 💰 Sales Sheet URL
@@ -547,6 +578,20 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
                 onChange={(e) => setExpenseUrl(e.target.value)}
                 placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=1491839510"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-purple-700 mb-1">
+                💸 Payment Received Sheet URL
+              </label>
+              <input
+                type="text"
+                value={paymentUrl}
+                onChange={(e) => setPaymentUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=265200234"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-purple-500 focus:outline-none"
                 required
               />
             </div>

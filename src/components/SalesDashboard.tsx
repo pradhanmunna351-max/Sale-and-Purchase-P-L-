@@ -305,17 +305,22 @@ export const SalesDashboard: React.FC<SalesDashboardProps> = ({
     const map: Record<string, { paid: number; open: number }> = {};
     filteredSales.forEach((item) => {
       const m = standardizeMonth(item.Month) || 'Unknown';
-      const status = String(item['Final Status'] || '').toLowerCase().trim();
+      const status = String(item['Final Status'] || item.Status || item.Document_Status || item['Document Status'] || '').toLowerCase().trim();
       if (!map[m]) map[m] = { paid: 0, open: 0 };
 
       const { grossSale, returnVal } = classifySalesRow(item);
       const val = grossSale > 0 ? grossSale : returnVal;
 
-      if (status === 'paid') map[m].paid += val;
+      if (status.includes('paid') || status.includes('closed')) map[m].paid += val;
       else map[m].open += val;
     });
 
-    const labels = Object.keys(map).sort();
+    const labels = Object.keys(map).sort((a, b) => {
+      const tA = parseMonthTimestamp(a);
+      const tB = parseMonthTimestamp(b);
+      if (tA && tB) return tA - tB;
+      return a.localeCompare(b);
+    });
     return {
       labels,
       paid: labels.map((l) => map[l].paid),

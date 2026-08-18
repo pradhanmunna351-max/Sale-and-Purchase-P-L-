@@ -8,10 +8,12 @@ import { ExpenseEntry, SalesRecord, PurchaseRecord } from './src/types.js';
 let expenseLedger: ExpenseEntry[] = [];
 let salesData: SalesRecord[] = [];
 let purchaseData: PurchaseRecord[] = [];
+let paymentData: any[] = [];
 let sheetUrls = {
-  sales: '',
-  purchase: '',
-  expense: '',
+  sales: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=439511693',
+  purchase: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=703337859',
+  expense: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=1491839510',
+  payment: 'https://docs.google.com/spreadsheets/d/1kpjCJHzDRLVhvzd09GGTRvwWSlq-j9QHpU9kBoAbrAU/edit#gid=265200234',
 };
 
 async function startServer() {
@@ -31,20 +33,22 @@ async function startServer() {
   });
 
   app.post('/api/config/sheet-urls', async (req, res) => {
-    const { sales, purchase, expense } = req.body;
+    const { sales, purchase, expense, payment } = req.body;
     if (sales !== undefined) sheetUrls.sales = sales;
     if (purchase !== undefined) sheetUrls.purchase = purchase;
     if (expense !== undefined) sheetUrls.expense = expense;
+    if (payment !== undefined) sheetUrls.payment = payment;
 
     try {
       if (sales) await syncGoogleSheetUrl(sales, 'sales').catch((err) => console.warn('Sales sync error:', err));
       if (purchase) await syncGoogleSheetUrl(purchase, 'purchase').catch((err) => console.warn('Purchase sync error:', err));
       if (expense) await syncGoogleSheetUrl(expense, 'expense').catch((err) => console.warn('Expense sync error:', err));
+      if (payment) await syncGoogleSheetUrl(payment, 'payment').catch((err) => console.warn('Payment sync error:', err));
     } catch (e) {
       console.warn('Sync failed:', e);
     }
 
-    res.json({ success: true, sheetUrls, counts: { sales: salesData.length, purchase: purchaseData.length, expense: expenseLedger.length } });
+    res.json({ success: true, sheetUrls, counts: { sales: salesData.length, purchase: purchaseData.length, expense: expenseLedger.length, payment: paymentData.length } });
   });
 
   app.post('/api/sync-all', async (req, res) => {
@@ -53,6 +57,7 @@ async function startServer() {
         sheetUrls.sales ? syncGoogleSheetUrl(sheetUrls.sales, 'sales') : Promise.resolve(0),
         sheetUrls.purchase ? syncGoogleSheetUrl(sheetUrls.purchase, 'purchase') : Promise.resolve(0),
         sheetUrls.expense ? syncGoogleSheetUrl(sheetUrls.expense, 'expense') : Promise.resolve(0),
+        sheetUrls.payment ? syncGoogleSheetUrl(sheetUrls.payment, 'payment') : Promise.resolve(0),
       ]);
 
       res.json({
@@ -61,6 +66,7 @@ async function startServer() {
           sales: salesData.length,
           purchase: purchaseData.length,
           expense: expenseLedger.length,
+          payment: paymentData.length,
         },
         message: 'Successfully synchronized data from Google Sheets!',
       });
@@ -267,7 +273,7 @@ function standardizeMonth(val: any): string {
 }
 
 // Helper function to sync and parse live Google Sheet CSV URLs
-async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 'expense'): Promise<number> {
+async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 'expense' | 'payment'): Promise<number> {
   if (!url || typeof url !== 'string' || !url.trim()) return 0;
 
   let csvUrl = url.trim();
@@ -314,6 +320,9 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
   } else if (category === 'expense') {
     expenseLedger = records.map((r, idx) => mapRecordByColumnMapping(r, {}, 'expense', idx) as ExpenseEntry);
     return expenseLedger.length;
+  } else if (category === 'payment') {
+    paymentData = records.map((r, idx) => mapRecordByColumnMapping(r, {}, 'payment', idx));
+    return paymentData.length;
   }
   return 0;
 }
@@ -322,7 +331,7 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
   function mapRecordByColumnMapping(
     rowObj: Record<string, any>,
     mapping: Record<string, string>,
-    targetType: 'sales' | 'purchase' | 'expense',
+    targetType: 'sales' | 'purchase' | 'expense' | 'payment',
     rowIndex: number,
     cachedKeys?: { original: string; lower: string }[]
   ) {
@@ -359,55 +368,72 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
       };
     }
 
+    if (targetType === 'payment') {
+      return {
+        Payment_No: String(getVal('paymentNo', ['payment no', 'payment', 'id', 'ref']) || '').trim(),
+        Bank_Entry_Date: String(getVal('date', ['bank entry date', 'date', 'bank date']) || new Date().toISOString().split('T')[0]).trim(),
+        Description: String(getVal('desc', ['description', 'desc', 'details', 'narration']) || '').trim(),
+        Amount: parseNumeric(getVal('amount', ['amount', 'value', 'payment amount'])),
+        Channel: String(getVal('channel', ['channel', 'marketplace', 'source']) || 'Direct').trim(),
+        Month: standardizeMonth(getVal('month', ['month', 'period', 'date']))
+      };
+    }
+
     if (targetType === 'sales') {
-      const debit = parseNumeric(getVal('debit', ['debit', 'invoice', 'amount']));
-      const credit = parseNumeric(getVal('credit', ['credit', 'sales', 'return']));
-      const transType = String(getVal('type', ['transaction_type', 'type', 'transaction type']) || '').trim();
-      const netAmt = credit - debit;
+      const debit = parseNumeric(getVal('debit', ['debit', 'invoice', 'invoice value', 'gross sales', 'sales', 'amount', 'total']));
+      const credit = parseNumeric(getVal('credit', ['credit', 'sales return', 'return', 'credit note', 'credit note value', 'refund', 'discount']));
+      const transType = String(getVal('type', ['transaction_type', 'type', 'transaction type', 'voucher type', 'doc type']) || '').trim();
+      const rawNet = parseNumeric(getVal('net', ['net_amount', 'net amount', 'net value', 'net sales', 'net']));
+      const netAmt = rawNet !== 0 ? rawNet : (credit !== 0 && debit === 0 ? credit : (debit !== 0 && credit === 0 ? debit : Math.abs(debit - credit)));
+      const docStatus = String(getVal('status', ['document status', 'document_status', 'status', 'state', 'doc status', 'final status', 'payment status']) || '').trim();
+      const finalStatus = String(getVal('finalStatus', ['final status', 'final_status', 'payment status']) || docStatus || 'Completed').trim();
 
       return {
-        Month: standardizeMonth(getVal('month', ['month', 'date'])),
-        Channel: String(getVal('channel', ['channel', 'marketplace', 'platform']) || 'Direct').trim(),
-        Date: String(getVal('date', ['date', 'month']) || new Date().toISOString().split('T')[0]).trim(),
-        Account_Name: String(getVal('name', ['account_name', 'name', 'seller', 'brand']) || '').trim(),
-        Transaction_Details: String(getVal('desc', ['transaction_details', 'desc', 'details', 'expense type']) || '').trim(),
+        Month: standardizeMonth(getVal('month', ['month', 'date', 'period', 'bill date', 'invoice date'])),
+        Channel: String(getVal('channel', ['channel', 'marketplace', 'platform', 'store', 'source']) || 'Direct').trim(),
+        Date: String(getVal('date', ['date', 'month', 'invoice date', 'bill date']) || new Date().toISOString().split('T')[0]).trim(),
+        Account_Name: String(getVal('name', ['account_name', 'customer name', 'customer', 'party name', 'party', 'name', 'seller', 'brand']) || '').trim(),
+        Transaction_Details: String(getVal('desc', ['transaction_details', 'desc', 'details', 'item details', 'expense type', 'narration']) || '').trim(),
         Transaction_Type: transType || 'Invoice',
-        Reference_Number: String(getVal('referenceNumber', ['reference_number', 'invoice number', 'ref']) || '').trim(),
-        Entity_Number: String(getVal('entity', ['entity_number', 'entity']) || '').trim(),
+        Reference_Number: String(getVal('referenceNumber', ['reference_number', 'invoice number', 'invoice no', 'inv no', 'ref', 'ref no']) || '').trim(),
+        Entity_Number: String(getVal('entity', ['entity_number', 'entity', 'gstin', 'pan', 'id']) || '').trim(),
         Debit: debit,
         Credit: credit,
         Net_Amount: netAmt,
-        Status: 'Completed',
-        'Final Status': 'Paid',
+        Status: docStatus || 'Completed',
+        'Final Status': finalStatus,
         'Return Type': '',
-        Outstanding_Balance: parseNumeric(getVal('outstanding', ['outstanding', 'outstanding balance', 'outstanding_balance', 'balance'])),
-        Document_Status: String(getVal('status', ['status', 'state', 'document status']) || '').trim(),
+        Outstanding_Balance: parseNumeric(getVal('outstanding', ['outstanding', 'outstanding balance', 'outstanding_balance', 'balance', 'due amount', 'pending amount'])),
+        Document_Status: docStatus,
       };
     }
 
     if (targetType === 'purchase') {
-      const debit = parseNumeric(getVal('debit', ['debit', 'purchase', 'bill', 'amount']));
-      const credit = parseNumeric(getVal('credit', ['credit', 'vendor credit', 'return']));
-      const transType = String(getVal('type', ['transaction_type', 'type', 'transaction type']) || '').trim();
-      const netAmt = debit - credit;
+      const debit = parseNumeric(getVal('debit', ['debit', 'purchase', 'purchase bill', 'bill amount', 'invoice value', 'bill', 'amount', 'gross', 'cogs', 'total']));
+      const credit = parseNumeric(getVal('credit', ['credit', 'vendor credit', 'return', 'purchase return', 'credit note', 'debit note', 'discount', 'refund']));
+      const transType = String(getVal('type', ['transaction_type', 'type', 'transaction type', 'voucher type', 'doc type']) || '').trim();
+      const rawNet = parseNumeric(getVal('net', ['net_amount', 'net amount', 'net value', 'net purchase', 'net']));
+      const netAmt = rawNet !== 0 ? rawNet : (debit !== 0 ? debit : (credit !== 0 ? credit : 0));
+      const docStatus = String(getVal('status', ['document status', 'document_status', 'status', 'state', 'doc status', 'final status', 'payment status', 'due status']) || '').trim();
+      const finalStatus = String(getVal('finalStatus', ['final status', 'final_status', 'payment status']) || docStatus || 'Completed').trim();
 
       return {
-        Month: standardizeMonth(getVal('month', ['month', 'date'])),
-        Channel: String(getVal('channel', ['channel', 'supplier', 'marketplace']) || 'Supplier').trim(),
-        Date: String(getVal('date', ['date', 'month']) || new Date().toISOString().split('T')[0]).trim(),
-        Account_Name: String(getVal('name', ['account_name', 'supplier', 'vendor', 'name']) || '').trim(),
-        Transaction_Details: String(getVal('desc', ['transaction_details', 'desc', 'details']) || '').trim(),
+        Month: standardizeMonth(getVal('month', ['month', 'date', 'period', 'bill date', 'invoice date'])),
+        Channel: String(getVal('channel', ['channel', 'supplier', 'vendor', 'category', 'marketplace', 'source']) || 'Supplier').trim(),
+        Date: String(getVal('date', ['date', 'month', 'bill date', 'invoice date']) || new Date().toISOString().split('T')[0]).trim(),
+        Account_Name: String(getVal('name', ['account_name', 'supplier name', 'vendor name', 'supplier', 'vendor', 'party name', 'party', 'name']) || '').trim(),
+        Transaction_Details: String(getVal('desc', ['transaction_details', 'desc', 'details', 'item details', 'expense type', 'narration']) || '').trim(),
         Transaction_Type: transType || 'Bill',
-        Reference_Number: String(getVal('referenceNumber', ['reference_number', 'ref']) || '').trim(),
-        Entity_Number: String(getVal('entity', ['entity_number', 'entity']) || '').trim(),
+        Reference_Number: String(getVal('referenceNumber', ['reference_number', 'bill no', 'bill number', 'invoice number', 'ref', 'ref no', 'voucher no']) || '').trim(),
+        Entity_Number: String(getVal('entity', ['entity_number', 'entity', 'gstin', 'pan', 'id']) || '').trim(),
         Debit: debit,
         Credit: credit,
         Net_Amount: netAmt,
-        Status: 'Completed',
-        'Final Status': 'Paid',
+        Status: docStatus || 'Completed',
+        'Final Status': finalStatus,
         'Return Type': '',
-        Outstanding_Balance: parseNumeric(getVal('outstanding', ['outstanding', 'outstanding balance', 'outstanding_balance', 'balance'])),
-        Document_Status: String(getVal('status', ['status', 'state', 'document status']) || '').trim(),
+        Outstanding_Balance: parseNumeric(getVal('outstanding', ['outstanding', 'outstanding balance', 'outstanding_balance', 'balance', 'due amount', 'pending amount'])),
+        Document_Status: docStatus,
       };
     }
   }
@@ -423,6 +449,7 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
       if (targetType === 'sales') sheetUrls.sales = sourceUrl;
       if (targetType === 'purchase') sheetUrls.purchase = sourceUrl;
       if (targetType === 'expense') sheetUrls.expense = sourceUrl;
+      if (targetType === 'payment') sheetUrls.payment = sourceUrl;
     }
 
     const cachedKeys = records.length > 0 ? Object.keys(records[0]).map(k => ({ original: k, lower: k.toLowerCase().trim() })) : [];
@@ -457,6 +484,17 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
         success: true,
         count: expenseLedger.length,
         message: `Updated Expense Ledger with ${expenseLedger.length} entries!`,
+      });
+    }
+
+    if (targetType === 'payment') {
+      paymentData = records.map((r: any, idx: number) =>
+        mapRecordByColumnMapping(r, columnMapping || {}, 'payment', idx, cachedKeys)
+      );
+      return res.json({
+        success: true,
+        count: paymentData.length,
+        message: `Updated Payment Received with ${paymentData.length} entries!`,
       });
     }
 
@@ -576,6 +614,10 @@ async function syncGoogleSheetUrl(url: string, category: 'sales' | 'purchase' | 
 // Sales API
   app.get('/api/sales', (req, res) => {
     res.json(salesData);
+  });
+
+  app.get('/api/payments', (req, res) => {
+    res.json(paymentData);
   });
 
   app.post('/api/sales', (req, res) => {
