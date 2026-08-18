@@ -4,7 +4,8 @@ import Papa from 'papaparse';
 import { createServer as createViteServer } from 'vite';
 import { mongoService, BATCH_CONFIG } from './src/server/db.js';
 import { syncManager } from './src/server/cronService.js';
-import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord } from './src/types.js';
+import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord, SchemaValidationDiagnostic } from './src/types.js';
+import { validateAndDiagnoseSchema } from './src/server/schemaMapper.js';
 
 function parseNumeric(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
@@ -316,6 +317,43 @@ async function startServer() {
       res.json({ success: true, message: 'MongoDB collections reset and seeded with default ledger records.' });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message || 'Reset failed' });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // SCHEMA VALIDATION DIAGNOSTIC UTILITY ENDPOINT
+  // -------------------------------------------------------------
+  app.post('/api/mongodb/diagnostics/validate-schema', async (req, res) => {
+    try {
+      const { collection, records } = req.body;
+      if (!collection) {
+        return res.status(400).json({ success: false, message: 'Collection name is required ("sales", "purchases", "expenses", "payments")' });
+      }
+
+      let dataToTest = records;
+      if (!dataToTest) {
+        if (collection === 'sales') dataToTest = await mongoService.getSales();
+        else if (collection === 'purchases' || collection === 'purchase') dataToTest = await mongoService.getPurchases();
+        else if (collection === 'expenses' || collection === 'expense') dataToTest = await mongoService.getExpenses();
+        else if (collection === 'payments' || collection === 'payment') dataToTest = await mongoService.getPayments();
+        else dataToTest = [];
+      }
+
+      const diagnostics = validateAndDiagnoseSchema(collection, dataToTest || []);
+      const status = await mongoService.getStatus();
+
+      res.json({
+        success: true,
+        collection,
+        diagnostics,
+        mongoConnection: {
+          connected: status.connected,
+          state: status.state,
+          databaseName: status.databaseName,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Diagnostic schema validation failed' });
     }
   });
 
@@ -683,8 +721,14 @@ async function startServer() {
       'Final Status': item['Final Status'] || 'Paid',
       'Return Type': item['Return Type'] || '',
     };
-    await mongoService.chunkedBatchInsert('sales', [newRecord], { replaceAll: false });
-    res.json({ success: true, message: 'Sales record saved to MongoDB', record: newRecord });
+    const insertResult = await mongoService.chunkedBatchInsert('sales', [newRecord], { replaceAll: false });
+    res.json({
+      success: insertResult.success,
+      message: insertResult.message,
+      record: newRecord,
+      verifiedCollectionCount: insertResult.verifiedCollectionCount,
+      diagnostics: insertResult.diagnostics,
+    });
   });
 
   app.post('/api/sales/clear', async (req, res) => {
@@ -722,8 +766,14 @@ async function startServer() {
       'Final Status': item['Final Status'] || 'Paid',
       'Return Type': item['Return Type'] || '',
     };
-    await mongoService.chunkedBatchInsert('purchases', [newRecord], { replaceAll: false });
-    res.json({ success: true, message: 'Purchase record saved to MongoDB', record: newRecord });
+    const insertResult = await mongoService.chunkedBatchInsert('purchases', [newRecord], { replaceAll: false });
+    res.json({
+      success: insertResult.success,
+      message: insertResult.message,
+      record: newRecord,
+      verifiedCollectionCount: insertResult.verifiedCollectionCount,
+      diagnostics: insertResult.diagnostics,
+    });
   });
 
   app.post('/api/purchase/clear', async (req, res) => {

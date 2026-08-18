@@ -1,5 +1,6 @@
 import { mongoService, BATCH_CONFIG } from './db.js';
 import { AutoSyncConfig, KeepAliveConfig } from '../types.js';
+import { mapRecordByColumnMapping } from './schemaMapper.js';
 import Papa from 'papaparse';
 
 // Auto-Sync background cron state
@@ -124,6 +125,9 @@ class BackgroundSyncManager {
         return obj;
       });
 
+      const cachedKeys = rawRecords.length > 0 ? Object.keys(rawRecords[0]).map(k => ({ original: k, lower: k.toLowerCase().trim() })) : [];
+      const mappedRecords = rawRecords.map((r, idx) => mapRecordByColumnMapping(r, {}, category, idx, cachedKeys));
+
       const collectionMap: Record<string, 'sales' | 'purchases' | 'expenses' | 'payments'> = {
         sales: 'sales',
         purchase: 'purchases',
@@ -131,7 +135,7 @@ class BackgroundSyncManager {
         payment: 'payments',
       };
 
-      const result = await mongoService.chunkedBatchInsert(collectionMap[category], rawRecords, {
+      const result = await mongoService.chunkedBatchInsert(collectionMap[category], mappedRecords, {
         chunkSize: BATCH_CONFIG.DEFAULT_CHUNK_SIZE,
         concurrency: BATCH_CONFIG.MAX_CONCURRENCY,
         replaceAll: true,

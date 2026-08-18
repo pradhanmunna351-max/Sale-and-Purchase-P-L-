@@ -23,8 +23,10 @@ import {
   Timer,
   HeartHandshake,
   Check,
+  FileCheck2,
+  AlertCircle,
 } from 'lucide-react';
-import { MongoStatusInfo, ParallelQueryBenchmarkResult, AutoSyncConfig, KeepAliveConfig } from '../types';
+import { MongoStatusInfo, ParallelQueryBenchmarkResult, AutoSyncConfig, KeepAliveConfig, SchemaValidationDiagnostic } from '../types';
 
 interface MongoStatusModalProps {
   isOpen: boolean;
@@ -37,7 +39,7 @@ export const MongoStatusModal: React.FC<MongoStatusModalProps> = ({
   onClose,
   onRefreshData,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'autosync' | 'directseed' | 'keepalive'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'autosync' | 'directseed' | 'diagnostics' | 'keepalive'>('overview');
   const [status, setStatus] = useState<MongoStatusInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -49,6 +51,11 @@ export const MongoStatusModal: React.FC<MongoStatusModalProps> = ({
   const [benchmark, setBenchmark] = useState<ParallelQueryBenchmarkResult | null>(null);
   const [isBenchmarking, setIsBenchmarking] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+
+  // Diagnostic Schema State
+  const [diagCollection, setDiagCollection] = useState<'sales' | 'purchases' | 'expenses' | 'payments'>('sales');
+  const [diagResult, setDiagResult] = useState<SchemaValidationDiagnostic | null>(null);
+  const [isValidatingSchema, setIsValidatingSchema] = useState(false);
 
   // Auto-Sync & KeepAlive states
   const [autoSync, setAutoSync] = useState<AutoSyncConfig | null>(null);
@@ -141,6 +148,26 @@ export const MongoStatusModal: React.FC<MongoStatusModalProps> = ({
       console.warn('Benchmark error:', e);
     } finally {
       setIsBenchmarking(false);
+    }
+  };
+
+  const handleRunDiagnosticSchemaCheck = async (collection: 'sales' | 'purchases' | 'expenses' | 'payments') => {
+    setIsValidatingSchema(true);
+    setDiagCollection(collection);
+    try {
+      const res = await fetch('/api/mongodb/diagnostics/validate-schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collection }),
+      });
+      const data = await res.json();
+      if (data.success && data.diagnostics) {
+        setDiagResult(data.diagnostics);
+      }
+    } catch (e) {
+      console.warn('Diagnostic check failed:', e);
+    } finally {
+      setIsValidatingSchema(false);
     }
   };
 
@@ -309,6 +336,20 @@ export const MongoStatusModal: React.FC<MongoStatusModalProps> = ({
             }`}
           >
             <UploadCloud size={14} /> ⚡ Direct Data Seeder
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('diagnostics');
+              if (!diagResult) handleRunDiagnosticSchemaCheck('sales');
+            }}
+            className={`py-3 px-3.5 border-b-2 flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+              activeTab === 'diagnostics'
+                ? 'border-emerald-600 text-emerald-800 bg-white shadow-2xs font-extrabold'
+                : 'border-transparent hover:text-gray-900'
+            }`}
+          >
+            <FileCheck2 size={14} /> 🔍 Schema Diagnostics
           </button>
 
           <button
@@ -743,7 +784,107 @@ export const MongoStatusModal: React.FC<MongoStatusModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* TAB 4: RENDER 24/7 KEEP-ALIVE CRON */}
+          {/* TAB 4: SCHEMA VALIDATION DIAGNOSTICS */}
+          {/* ========================================================= */}
+          {activeTab === 'diagnostics' && (
+            <div className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-950">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <FileCheck2 size={18} className="text-emerald-700" />
+                    <h3 className="text-sm font-black">MongoDB 'business_ledger_db' Schema Diagnostics</h3>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-700 text-white text-[11px] font-extrabold">
+                    Real-time Audit
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  Deeply analyzes records in database collections or incoming bulk payloads against strict schema rules (datatypes, required indices, numeric constraints).
+                </p>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl p-4.5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    {(['sales', 'purchases', 'expenses', 'payments'] as const).map((col) => (
+                      <button
+                        key={col}
+                        type="button"
+                        onClick={() => handleRunDiagnosticSchemaCheck(col)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                          diagCollection === col
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {col}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRunDiagnosticSchemaCheck(diagCollection)}
+                    disabled={isValidatingSchema}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:bg-gray-300"
+                  >
+                    <RefreshCw size={12} className={isValidatingSchema ? 'animate-spin' : ''} />
+                    <span>Re-Audit Schema</span>
+                  </button>
+                </div>
+
+                {diagResult ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      <div className="bg-gray-50 border border-gray-100 p-3 rounded-lg text-center">
+                        <span className="text-[10px] text-gray-400 font-bold block uppercase">Collection</span>
+                        <span className="text-xs font-black text-gray-800 uppercase">{diagResult.collection}</span>
+                      </div>
+                      <div className="bg-gray-50 border border-gray-100 p-3 rounded-lg text-center">
+                        <span className="text-[10px] text-gray-400 font-bold block uppercase">Documents Checked</span>
+                        <span className="text-xs font-black text-blue-700">{diagResult.totalChecked.toLocaleString()}</span>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-lg text-center">
+                        <span className="text-[10px] text-emerald-600 font-bold block uppercase">Valid Schema</span>
+                        <span className="text-xs font-black text-emerald-700">{diagResult.validCount.toLocaleString()}</span>
+                      </div>
+                      <div className={`${diagResult.invalidCount > 0 ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'} border p-3 rounded-lg text-center`}>
+                        <span className="text-[10px] text-gray-400 font-bold block uppercase">Schema Errors</span>
+                        <span className={`text-xs font-black ${diagResult.invalidCount > 0 ? 'text-red-700' : 'text-gray-500'}`}>{diagResult.invalidCount}</span>
+                      </div>
+                    </div>
+
+                    {diagResult.isValid ? (
+                      <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl p-3.5 text-xs font-bold flex items-center gap-2">
+                        <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                        <span>All {diagResult.totalChecked.toLocaleString()} documents in collection '{diagResult.collection}' conform to the MongoDB schema.</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="bg-red-50 border border-red-200 text-red-900 rounded-xl p-3 text-xs font-bold flex items-center gap-2">
+                          <AlertCircle size={16} className="text-red-600 shrink-0" />
+                          <span>Found {diagResult.invalidCount} schema anomalies during write validation.</span>
+                        </div>
+                        <div className="bg-gray-900 text-red-300 font-mono text-[11px] p-3 rounded-xl max-h-48 overflow-y-auto space-y-1.5 shadow-inner">
+                          {diagResult.errors.map((err, idx) => (
+                            <div key={idx} className="border-b border-gray-800 pb-1">
+                              <span className="text-yellow-400 font-bold">[Row #{err.index + 1} ({err.recordSummary})]: </span>
+                              <span>{err.details}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-xs text-gray-400">Click a collection to inspect schema compliance</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 5: RENDER 24/7 KEEP-ALIVE CRON */}
           {/* ========================================================= */}
           {activeTab === 'keepalive' && (
             <div className="space-y-4">

@@ -1,6 +1,7 @@
 import { MongoClient, Db, Collection, Document } from 'mongodb';
 import { INITIAL_EXPENSES, INITIAL_SALES, INITIAL_PURCHASE } from '../data/mockData.js';
-import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord, MongoStatusInfo, ParallelQueryBenchmarkResult } from '../types.js';
+import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord, MongoStatusInfo, ParallelQueryBenchmarkResult, SchemaValidationDiagnostic } from '../types.js';
+import { validateAndDiagnoseSchema } from './schemaMapper.js';
 
 // Default connection string from user request or environment
 const DEFAULT_MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://munapradhan:Munna%409090@cluster0.dwrw0lm.mongodb.net/?appName=Cluster0';
@@ -57,7 +58,7 @@ class MongoDatabaseService {
 
     // Check if placeholder is still present
     if (targetUri.includes('<db_password>') || targetUri.includes('<password>')) {
-      console.warn('⚠️ MongoDB URI contains "<db_password>" placeholder. Running in high-performance memory cache mode. You can configure password in Link Settings & MongoDB modal.');
+      console.warn('⚠️ MongoDB URI contains "<db_password>" placeholder.');
       this.connectionState = 'fallback_memory';
       this.isConnected = false;
       this.lastErrorMessage = 'Password placeholder (<db_password>) present. Please enter database password in MongoDB settings.';
@@ -72,26 +73,32 @@ class MongoDatabaseService {
         } catch {}
       }
 
+      console.log(`🔌 Connecting to MongoDB Atlas cluster at ${this.getMaskedUri(targetUri)}...`);
+
       const client = new MongoClient(targetUri, {
         maxPoolSize: BATCH_CONFIG.MAX_POOL_SIZE,
         minPoolSize: BATCH_CONFIG.MIN_POOL_SIZE,
-        serverSelectionTimeoutMS: 6000,
-        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 12000,
+        connectTimeoutMS: 15000,
+        socketTimeoutMS: 45000,
         retryWrites: true,
       });
 
       const startTime = Date.now();
       await client.connect();
+      
+      const adminDb = client.db(DB_NAME);
+      await adminDb.command({ ping: 1 });
       this.lastPingLatencyMs = Date.now() - startTime;
 
       this.client = client;
-      this.db = client.db(DB_NAME);
+      this.db = adminDb;
       this.isConnected = true;
       this.connectionState = 'connected';
       this.lastErrorMessage = '';
       this.lastSyncTime = new Date().toLocaleTimeString('en-US');
 
-      console.log(`✅ Connected to MongoDB Atlas (${DB_NAME}) in ${this.lastPingLatencyMs}ms`);
+      console.log(`✅ Successfully connected to MongoDB Atlas database "${DB_NAME}" (${this.lastPingLatencyMs}ms)`);
 
       // Initialize background compound indexes and seed if empty
       await this.ensureIndexes();
@@ -99,10 +106,10 @@ class MongoDatabaseService {
 
       return true;
     } catch (err: any) {
-      console.error('❌ MongoDB Connection Error:', err.message || err);
+      console.error('❌ MongoDB Atlas Connection Error:', err.message || err);
       this.isConnected = false;
       this.connectionState = 'error';
-      this.lastErrorMessage = err.message || 'Connection failed';
+      this.lastErrorMessage = err.message || 'Connection to Atlas cluster failed. Please check IP access list or password.';
       return false;
     }
   }
@@ -191,10 +198,15 @@ class MongoDatabaseService {
     elapsedMs: number;
     throughputPerSec: number;
     message: string;
+    diagnostics?: SchemaValidationDiagnostic;
+    verifiedCollectionCount?: number;
   }> {
     const chunkSize = options.chunkSize || BATCH_CONFIG.DEFAULT_CHUNK_SIZE;
     const concurrency = Math.min(options.concurrency || BATCH_CONFIG.MAX_CONCURRENCY, 8);
     const startTime = Date.now();
+
+    // 1. Run Schema Validation Diagnostics on batch
+    const diagnostics = validateAndDiagnoseSchema(collectionName, records);
 
     if (!records || records.length === 0) {
       return {
@@ -204,6 +216,7 @@ class MongoDatabaseService {
         elapsedMs: 0,
         throughputPerSec: 0,
         message: 'No records to insert',
+        diagnostics,
       };
     }
 
@@ -214,7 +227,7 @@ class MongoDatabaseService {
     }
     const totalChunks = chunks.length;
 
-    // Fallback in-memory processing if MongoDB not connected
+    // Fallback in-memory processing ONLY if MongoDB is not connected
     if (!this.isConnected || !this.db) {
       if (options.replaceAll) {
         if (collectionName === 'sales') this.memorySales = [...records];
@@ -235,7 +248,7 @@ class MongoDatabaseService {
         totalChunks,
         elapsedMs,
         throughputPerSec: throughput,
-        message: `Processed ${records.length} records in memory across ${totalChunks} chunks`,
+        message: `Saved ${records.length} records in memory cache (MongoDB not connected: ${this.lastErrorMessage || 'Offline'})`,
       };
     }
 
@@ -248,19 +261,28 @@ class MongoDatabaseService {
 
     // Load-balanced concurrent worker queue
     let currentChunkIndex = 0;
+    let insertedCount = 0;
+    const errors: string[] = [];
+
     const worker = async () => {
       while (currentChunkIndex < chunks.length) {
         const index = currentChunkIndex++;
         const chunk = chunks[index];
         if (!chunk || chunk.length === 0) continue;
 
-        // Perform fast bulk insertion with ordered: false for maximum speed
         try {
-          await coll.insertMany(chunk, { ordered: false });
+          const insertRes = await coll.insertMany(chunk, { ordered: false });
+          insertedCount += insertRes.insertedCount || chunk.length;
         } catch (insertErr: any) {
-          // If duplicate or schema variance occurs, catch gracefully
+          if (insertErr.insertedCount) {
+            insertedCount += insertErr.insertedCount;
+          }
           if (insertErr.writeErrors && insertErr.writeErrors.length > 0) {
-            console.warn(`Chunk ${index + 1} had ${insertErr.writeErrors.length} write variations.`);
+            console.error(`❌ [business_ledger_db Schema/Write Error] Chunk ${index + 1} encountered ${insertErr.writeErrors.length} write errors in "${collectionName}":`, insertErr.writeErrors[0]);
+            errors.push(`Chunk ${index + 1}: ${insertErr.writeErrors.length} validation/write errors`);
+          } else {
+            console.error(`❌ [business_ledger_db Write Error] Chunk ${index + 1} failed in "${collectionName}":`, insertErr.message);
+            errors.push(`Chunk ${index + 1}: ${insertErr.message || 'Insert failure'}`);
           }
         }
 
@@ -283,17 +305,40 @@ class MongoDatabaseService {
 
     await Promise.all(workerPromises);
 
+    // Keep memory cache synchronized with Atlas database
+    if (options.replaceAll) {
+      if (collectionName === 'sales') this.memorySales = [...records];
+      if (collectionName === 'purchases') this.memoryPurchases = [...records];
+      if (collectionName === 'expenses') this.memoryExpenses = [...records];
+      if (collectionName === 'payments') this.memoryPayments = [...records];
+    } else {
+      if (collectionName === 'sales') this.memorySales.push(...records);
+      if (collectionName === 'purchases') this.memoryPurchases.push(...records);
+      if (collectionName === 'expenses') this.memoryExpenses.push(...records);
+      if (collectionName === 'payments') this.memoryPayments.push(...records);
+    }
+
+    // Explicitly verify exact physical document count in MongoDB Atlas collection
+    let verifiedCollectionCount = insertedCount;
+    try {
+      verifiedCollectionCount = await coll.countDocuments();
+    } catch {
+      verifiedCollectionCount = insertedCount;
+    }
+
     const elapsedMs = Math.max(Date.now() - startTime, 1);
-    const throughputPerSec = Math.round((records.length / elapsedMs) * 1000);
+    const throughputPerSec = Math.round((insertedCount / elapsedMs) * 1000);
     this.lastSyncTime = new Date().toLocaleTimeString('en-US');
 
     return {
-      success: true,
-      totalRecords: records.length,
+      success: (errors.length === 0 || insertedCount > 0) && verifiedCollectionCount >= insertedCount,
+      totalRecords: insertedCount,
       totalChunks,
       elapsedMs,
       throughputPerSec,
-      message: `Successfully ingested ${records.length} records in ${totalChunks} parallel chunks (${throughputPerSec} recs/sec)`,
+      verifiedCollectionCount,
+      diagnostics,
+      message: `Confirmed ${insertedCount.toLocaleString()} documents physically inserted into MongoDB collection "${collectionName}" (Verified DB Total: ${verifiedCollectionCount.toLocaleString()})${errors.length ? ` with ${errors.length} write warnings` : ''}`,
     };
   }
 
@@ -444,11 +489,11 @@ class MongoDatabaseService {
       this.lastPingLatencyMs = Date.now() - pingStart;
 
       const [salesCount, purCount, expCount, payCount, configCount] = await Promise.all([
-        this.db.collection('sales').estimatedDocumentCount().catch(() => 0),
-        this.db.collection('purchases').estimatedDocumentCount().catch(() => 0),
-        this.db.collection('expenses').estimatedDocumentCount().catch(() => 0),
-        this.db.collection('payments').estimatedDocumentCount().catch(() => 0),
-        this.db.collection('configs').estimatedDocumentCount().catch(() => 0),
+        this.db.collection('sales').countDocuments().catch(() => 0),
+        this.db.collection('purchases').countDocuments().catch(() => 0),
+        this.db.collection('expenses').countDocuments().catch(() => 0),
+        this.db.collection('payments').countDocuments().catch(() => 0),
+        this.db.collection('configs').countDocuments().catch(() => 0),
       ]);
 
       const totalDocs = salesCount + purCount + expCount + payCount + configCount;

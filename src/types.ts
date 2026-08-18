@@ -146,6 +146,22 @@ export interface AutoSyncConfig {
   }[];
 }
 
+export interface SchemaValidationDiagnostic {
+  isValid: boolean;
+  totalChecked: number;
+  validCount: number;
+  invalidCount: number;
+  collection: string;
+  errors: {
+    index: number;
+    recordSummary: string;
+    missingFields: string[];
+    typeErrors: string[];
+    details: string;
+  }[];
+  timestamp: string;
+}
+
 export interface KeepAliveConfig {
   enabled: boolean;
   intervalMinutes: number;
