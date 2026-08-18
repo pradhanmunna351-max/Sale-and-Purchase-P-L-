@@ -1,0 +1,6 @@
+{
+  "name": "Expense Ledger",
+  "description": "Complete Expense, Sales, Purchase, and Profit & Loss Analytics Ledger",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
