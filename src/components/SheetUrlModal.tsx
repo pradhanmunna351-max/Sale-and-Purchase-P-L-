@@ -125,7 +125,7 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
   const handleApplyAndSetValues = async () => {
     if (!inspectionResult) return;
     setIsImporting(true);
-    setImportStatus('Setting values according to headers and mapped columns...');
+    setImportStatus('Dividing records into chunks and uploading with parallel worker pool...');
 
     try {
       // Map raw rows into object records using extracted headers
@@ -137,7 +137,7 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
         return obj;
       });
 
-      const res = await fetch('/api/import-parsed-data', {
+      const res = await fetch('/api/import-chunked', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -145,11 +145,14 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
           records,
           columnMapping,
           sourceUrl: inspectUrl.trim(),
+          chunkSize: 500,
+          concurrency: 4,
+          replaceAll: true,
         }),
       });
 
       if (!res.ok) {
-        setImportStatus(`❌ Server returned error (${res.status}). Data might be processing in the background. Please close and refresh.`);
+        setImportStatus(`❌ Server error (${res.status}). Retrying or check server connection.`);
         setIsImporting(false);
         return;
       }
@@ -175,12 +178,12 @@ export const SheetUrlModal: React.FC<SheetUrlModalProps> = ({
         // Auto-close modal after slight delay so user sees success
         setTimeout(() => {
           onClose();
-        }, 800);
+        }, 1200);
       } else {
         setImportStatus(`❌ ${data.message || 'Import failed'}`);
       }
     } catch (err: any) {
-      setImportStatus(`❌ Error processing data import: ${err.message || 'Unknown error'}`);
+      setImportStatus(`❌ Error processing chunked data import: ${err.message || 'Unknown error'}`);
     } finally {
       setIsImporting(false);
     }

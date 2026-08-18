@@ -15,6 +15,7 @@ import { ExpenseEntry, SalesRecord, PurchaseRecord, PaymentRecord, ToastMessage 
 import { INITIAL_EXPENSES, INITIAL_SALES, INITIAL_PURCHASE } from './data/mockData';
 import { generateMasterExcelReport, ExcelExportOptions } from './utils/excelExport';
 import { CustomizeExcelModal } from './components/CustomizeExcelModal';
+import { MongoStatusModal } from './components/MongoStatusModal';
 import { FileSpreadsheet } from 'lucide-react';
 
 interface TabErrorBoundaryProps {
@@ -88,6 +89,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isFormulaModalOpen, setIsFormulaModalOpen] = useState(false);
   const [isCustomizeExcelOpen, setIsCustomizeExcelOpen] = useState(false);
+  const [isMongoModalOpen, setIsMongoModalOpen] = useState(false);
   const [brandSuggestions, setBrandSuggestions] = useState<string[]>([]);
 
   const showToast = useCallback((text: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -465,6 +467,7 @@ export default function App() {
           sheetUrls={sheetUrls}
           entryCount={expenseEntries.length}
           onOpenModal={() => setIsModalOpen(true)}
+          onOpenMongoModal={() => setIsMongoModalOpen(true)}
           lastSyncTimes={lastSyncTimes}
           onRefreshData={fetchData}
           isRefreshing={isRefreshing}
@@ -651,6 +654,12 @@ export default function App() {
         paymentData={paymentData}
         onExport={handleExportExcel}
         isExporting={isExportingExcel}
+      />
+
+      <MongoStatusModal
+        isOpen={isMongoModalOpen}
+        onClose={() => setIsMongoModalOpen(false)}
+        onRefreshData={fetchData}
       />
 
       <ToastContainer toasts={toasts} />

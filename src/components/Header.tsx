@@ -11,6 +11,7 @@ import {
   Square,
   SlidersHorizontal,
   CheckCircle2,
+  Database,
 } from 'lucide-react';
 import { ExcelExportOptions } from '../utils/excelExport';
 
@@ -22,6 +23,8 @@ interface HeaderProps {
   };
   entryCount: number;
   onOpenModal: () => void;
+  onOpenMongoModal?: () => void;
+  isMongoConnected?: boolean;
   lastSyncTimes?: {
     sales: string;
     purchase: string;
@@ -40,6 +43,8 @@ export const Header: React.FC<HeaderProps> = ({
   sheetUrls,
   entryCount,
   onOpenModal,
+  onOpenMongoModal,
+  isMongoConnected = true,
   lastSyncTimes,
   onRefreshData,
   isRefreshing = false,
@@ -425,6 +430,17 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Settings size={14} /> ⚙️ Link Settings & Auto-Set
         </button>
+
+        {onOpenMongoModal && (
+          <button
+            onClick={onOpenMongoModal}
+            title="MongoDB Database Hub — Parallel Queries & Chunked Load Balancing"
+            className="bg-emerald-900/80 hover:bg-emerald-900 text-emerald-200 hover:text-white border border-emerald-500/40 text-xs font-bold px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 shadow-sm"
+          >
+            <Database size={13} className="text-emerald-400 animate-pulse" />
+            <span>🍃 MongoDB Hub</span>
+          </button>
+        )}
 
         <span className="bg-white/20 px-2.5 py-1 rounded-full text-[11px] font-medium">
           {entryCount} Entries
